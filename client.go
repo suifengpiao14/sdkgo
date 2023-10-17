@@ -1,4 +1,4 @@
-package apihandler
+package sdkgo
 
 import (
 	"context"
