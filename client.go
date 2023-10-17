@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 
@@ -25,11 +24,14 @@ var (
 )
 
 type ClientOutputI interface {
-	String() (out string, err error)
 	Error() (err error) // 判断结果是否有错误,没有错误,认为成功
 }
 
-type HttpRequestFunc func(ctx context.Context, client ClientInterface, w http.ResponseWriter, r *http.Request) (err error) // 此处只返回error,确保输出写入到w
+type DefaultImplementClientOutput struct{}
+
+func (c DefaultImplementClientOutput) Error() (err error) {
+	return nil
+}
 
 type ClientInterface interface {
 	GetInputSchema() (lineschema string)
@@ -94,7 +96,7 @@ type _Client struct {
 var clientMap sync.Map
 
 const (
-	clientMap_route_add_key = "___all_api_add___"
+	clientMap_route_add_key = "___all_client_add___"
 )
 
 // RegisterClient 创建处理器，内部逻辑在接收请求前已经确定，后续不变，所以有错误直接panic ，能正常启动后，这部分不会出现错误
@@ -148,19 +150,17 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 	return nil
 }
 
-func GetClient(method string, path string) (api _Client, err error) {
+func GetClient(client ClientInterface) (api _Client, err error) {
+	method, path := client.GetRoute()
 	key := getRouteKey(method, path)
 	apiAny, ok := clientMap.Load(key)
 	if !ok {
 		return api, errors.WithMessagef(API_NOT_FOUND, "method:%s,path:%s", method, path)
 	}
 	exitsApi := apiAny.(*_Client)
-	rt := reflect.TypeOf(exitsApi.ClientInterface).Elem()
-	rv := reflect.New(rt)
-	ClientInterface := rv.Interface().(ClientInterface)
-	ClientInterface.Init()
+	client.Init()
 	api = _Client{
-		ClientInterface:       ClientInterface,
+		ClientInterface:       client,
 		validateInputLoader:   exitsApi.validateInputLoader,
 		validateOutputLoader:  exitsApi.validateOutputLoader,
 		inputFormatGjsonPath:  exitsApi.inputFormatGjsonPath,
@@ -202,23 +202,97 @@ func (a _Client) modifyTypeByFormat(input string, formatGjsonPath string) (forma
 	return formattedInput, nil
 }
 
-func (a _Client) convertInput(input string) (err error) {
-	err = json.Unmarshal([]byte(input), a.ClientInterface)
+func (a _Client) convertOutput(out string) (err error) {
+	err = json.Unmarshal([]byte(out), a.ClientInterface.GetOutputRef())
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
+//FormatAsIntput 供外部格式化输出
+func (a _Client) FormatAsIntput(input string) (formatedInput string, err error) {
+	formatedInput, err = a.modifyTypeByFormat(input, a.inputFormatGjsonPath)
+	return formatedInput, err
+}
+
+//FormatAsOutput 供外部格式化输出
+func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error) {
+	formatedOutput, err = a.modifyTypeByFormat(output, a.outputFormatGjsonPath)
+	return formatedOutput, err
+}
+
+func (a _Client) Request() {
+
+}
+
 // RequestFn 通用请求方法
-func RequestFn(ctx context.Context, input ClientInterface, url string) (err error) {
-	out := input.GetOutputRef()
+func (a _Client) RequestFn(ctx context.Context) (err error) {
+	b, err := json.Marshal(a.ClientInterface)
+	if err != nil {
+		return err
+	}
+	inputStr := string(b)
+	// 合并默认值
+	if a.defaultJson != "" {
+		inputStr, err = jsonschemaline.MergeDefault(inputStr, a.defaultJson)
+		if err != nil {
+			err = errors.WithMessage(err, "merge default value error")
+			return err
+		}
+	}
+	err = a.inputValidate(inputStr)
+	if err != nil {
+		return err
+	}
+	//将format 中 int,float,bool 应用到数据
+	formattedInput, err := a.FormatAsIntput(inputStr)
+	if err != nil {
+		return err
+	}
+	params := make(map[string]string)
+	err = json.Unmarshal([]byte(formattedInput), &params)
+	if err != nil {
+		return err
+	}
+	cfg, err := getConfig()
+	if err != nil {
+		return err
+	}
+	outByte, err := RequestFn(ctx, a.ClientInterface, cfg.Host)
+	if err != nil {
+		return err
+	}
+	originalOut := string(outByte)
+	outStr, err := a.FormatAsOutput(originalOut)
+	if err != nil {
+		return err
+	}
+	err = a.outputValidate(outStr)
+	if err != nil {
+		return err
+	}
+
+	err = a.convertOutput(outStr)
+	if err != nil {
+		return err
+	}
+	err = a.GetOutputRef().Error()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RequestFn 通用请求方法
+func RequestFn(ctx context.Context, input ClientInterface, host string) (out []byte, err error) {
 	method, path := input.GetRoute()
-	url = fmt.Sprintf("%s%s", url, path)
+	urlstr := fmt.Sprintf("%s%s", host, path)
 	r := resty.New().NewRequest().SetResult(&out)
 	params, err := Struct2FormMap(input)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	switch strings.ToUpper(method) {
 	case http.MethodGet:
@@ -232,20 +306,15 @@ func RequestFn(ctx context.Context, input ClientInterface, url string) (err erro
 	defer func() {
 		logchan.SendLogInfo(logInfo)
 	}()
-	res, err := r.Execute(method, url)
+	res, err := r.Execute(method, urlstr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	logInfo.Response = res.RawResponse
-	err = out.Error()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return res.Body(), nil
 }
 
 // Struct2FormMap 结构体转map[string]string 用于请求参数传递
