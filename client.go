@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -20,7 +21,7 @@ import (
 )
 
 var (
-	API_NOT_FOUND = errors.Errorf("not found")
+	API_NOT_FOUND = errors.Errorf("not found client")
 )
 
 type ClientOutputI interface {
@@ -42,6 +43,7 @@ type ClientInterface interface {
 	GetName() (domain string, name string)
 	GetOutputRef() (output ClientOutputI)
 	Request(ctx context.Context) (err error)
+	GetCClient(c ClientInterface) (cClient *_Client, err error)
 }
 
 type DefaultImplementPartClientFuncs struct{}
@@ -54,6 +56,14 @@ func (e *DefaultImplementPartClientFuncs) GetOutputSchema() (lineschema string) 
 }
 
 func (e *DefaultImplementPartClientFuncs) Init() {
+}
+
+func (e *DefaultImplementPartClientFuncs) GetCClient(c ClientInterface) (cClient *_Client, err error) {
+	cClient, err = GetClient(c)
+	if err != nil {
+		return nil, err
+	}
+	return cClient, nil
 }
 
 type LogName string
@@ -117,7 +127,7 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 		if err != nil {
 			return err
 		}
-		api.inputFormatGjsonPath = inputLineSchema.GjsonPathWithDefaultFormat(true)
+		api.inputFormatGjsonPath = inputLineSchema.GjsonPath(true, jsonschemaline.FormatPathFnByFormatOut) // 这个地方要反向，将输入的字符全部转为字符串，供网络传输
 		defaultInputJson, err := inputLineSchema.DefaultJson()
 		if err != nil {
 			err = errors.WithMessage(err, "get input default json error")
@@ -135,7 +145,7 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 		if err != nil {
 			return err
 		}
-		api.outputFormatGjsonPath = outputLineSchema.GjsonPathWithDefaultFormat(true)
+		api.outputFormatGjsonPath = outputLineSchema.GjsonPath(true, jsonschemaline.FormatPathFnByFormatIn) // 这个地方要反向，将输入的字符全部转为结构体类型，供程序应用
 	}
 	clientMap.Store(key, api)
 	routes := make(map[string][2]string, 0)
@@ -150,16 +160,29 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 	return nil
 }
 
-func GetClient(client ClientInterface) (api _Client, err error) {
+func GetClient(client ClientInterface) (cClient *_Client, err error) {
 	method, path := client.GetRoute()
 	key := getRouteKey(method, path)
 	apiAny, ok := clientMap.Load(key)
 	if !ok {
-		return api, errors.WithMessagef(API_NOT_FOUND, "method:%s,path:%s", method, path)
+		//延迟注册
+		rt := reflect.TypeOf(client).Elem()
+		rv := reflect.New(rt)
+		_client := rv.Interface().(ClientInterface)
+		_client.Init()
+		err = RegisterClient(_client)
+		if err != nil {
+			return nil, err
+		}
+		apiAny, ok = clientMap.Load(key)
+		if !ok {
+			return cClient, errors.WithMessagef(API_NOT_FOUND, "method:%s,path:%s", method, path)
+		}
 	}
+
 	exitsApi := apiAny.(*_Client)
 	client.Init()
-	api = _Client{
+	cClient = &_Client{
 		ClientInterface:       client,
 		validateInputLoader:   exitsApi.validateInputLoader,
 		validateOutputLoader:  exitsApi.validateOutputLoader,
@@ -167,7 +190,7 @@ func GetClient(client ClientInterface) (api _Client, err error) {
 		outputFormatGjsonPath: exitsApi.outputFormatGjsonPath,
 		defaultJson:           exitsApi.defaultJson,
 	}
-	return api, nil
+	return cClient, nil
 }
 
 func (a _Client) inputValidate(input string) (err error) {
@@ -227,7 +250,7 @@ func (a _Client) Request() {
 }
 
 // RequestFn 通用请求方法
-func (a _Client) RequestFn(ctx context.Context) (err error) {
+func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 	b, err := json.Marshal(a.ClientInterface)
 	if err != nil {
 		return err
@@ -255,20 +278,16 @@ func (a _Client) RequestFn(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	cfg, err := getConfig()
-	if err != nil {
-		return err
-	}
-	outByte, err := RequestFn(ctx, a.ClientInterface, cfg.Host)
+	outByte, err := RequestFn(ctx, a.ClientInterface, host)
 	if err != nil {
 		return err
 	}
 	originalOut := string(outByte)
-	outStr, err := a.FormatAsOutput(originalOut)
+	err = a.outputValidate(originalOut) // 先验证网络数据
 	if err != nil {
 		return err
 	}
-	err = a.outputValidate(outStr)
+	outStr, err := a.FormatAsOutput(originalOut) // 网络数据ok，内部转换
 	if err != nil {
 		return err
 	}
@@ -313,8 +332,10 @@ func RequestFn(ctx context.Context, input ClientInterface, host string) (out []b
 	if err != nil {
 		return nil, err
 	}
+	responseBody := res.Body()
+	logInfo.ResponseBody = string(responseBody)
 	logInfo.Response = res.RawResponse
-	return res.Body(), nil
+	return responseBody, nil
 }
 
 // Struct2FormMap 结构体转map[string]string 用于请求参数传递
