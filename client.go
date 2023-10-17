@@ -1,4 +1,4 @@
-package sdkgo
+package sdkgolib
 
 import (
 	"context"

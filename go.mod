@@ -1,4 +1,4 @@
-module github.com/suifengpiao14/sdkgo
+module github.com/suifengpiao14/sdkgolib
 
 go 1.21.0
 
