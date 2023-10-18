@@ -308,7 +308,7 @@ func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 func RequestFn(ctx context.Context, input ClientInterface, host string) (out []byte, err error) {
 	method, path := input.GetRoute()
 	urlstr := fmt.Sprintf("%s%s", host, path)
-	r := resty.New().NewRequest().SetResult(&out)
+	r := resty.New().NewRequest()
 	params, err := Struct2FormMap(input)
 	if err != nil {
 		return nil, err
