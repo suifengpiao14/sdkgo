@@ -245,10 +245,6 @@ func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error
 	return formatedOutput, err
 }
 
-func (a _Client) Request() {
-
-}
-
 // RequestFn 通用请求方法
 func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 	b, err := json.Marshal(a.ClientInterface)
