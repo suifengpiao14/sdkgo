@@ -43,8 +43,8 @@ type ClientInterface interface {
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
 	GetOutputRef() (output ClientOutputI)
-	Request() (err error)
-	GetCClient(c ClientInterface) (cClient *_Client, err error)
+	Request(ctx context.Context) (err error)
+	GetCClient(ctx context.Context, c ClientInterface) (cClient *_Client, err error)
 	SetContext(ctx context.Context)
 	GetContext() (ctx context.Context)
 }
@@ -72,8 +72,8 @@ func (e *DefaultImplementPartClientFuncs) GetContext() (ctx context.Context) {
 	}
 	return e.ctx
 }
-func (e *DefaultImplementPartClientFuncs) GetCClient(c ClientInterface) (cClient *_Client, err error) {
-	cClient, err = GetClient(c, context.Background())
+func (e *DefaultImplementPartClientFuncs) GetCClient(ctx context.Context, c ClientInterface) (cClient *_Client, err error) {
+	cClient, err = GetClient(ctx, c)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +115,7 @@ type _Client struct {
 	outputFormatGjsonPath string
 	validateInputLoader   gojsonschema.JSONLoader
 	validateOutputLoader  gojsonschema.JSONLoader
+	Request               *resty.Request
 }
 
 var clientMap sync.Map
@@ -174,7 +175,7 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 	return nil
 }
 
-func GetClient(client ClientInterface, ctx context.Context) (cClient *_Client, err error) {
+func GetClient(ctx context.Context, client ClientInterface) (cClient *_Client, err error) {
 	method, path := client.GetRoute()
 	key := getRouteKey(method, path)
 	apiAny, ok := clientMap.Load(key)
@@ -203,6 +204,7 @@ func GetClient(client ClientInterface, ctx context.Context) (cClient *_Client, e
 		inputFormatGjsonPath:  exitsApi.inputFormatGjsonPath,
 		outputFormatGjsonPath: exitsApi.outputFormatGjsonPath,
 		defaultJson:           exitsApi.defaultJson,
+		Request:               resty.New().R(),
 	}
 	return cClient, nil
 }
@@ -260,7 +262,7 @@ func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error
 }
 
 // RequestFn 通用请求方法
-func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
+func (a _Client) RequestFn(host string) (err error) {
 	b, err := json.Marshal(a.ClientInterface)
 	if err != nil {
 		return err
@@ -286,7 +288,13 @@ func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 	}
 
 	method, path := a.GetRoute()
-	outByte, err := RequestFn(ctx, host, method, path, formattedInput)
+	r := a.Request
+	headContentType := "Content-Type"
+	if r.Header.Get(headContentType) == "" {
+		r.Header.Add(headContentType, GetContentType(a.ClientInterface))
+	}
+
+	outByte, err := RequestFn(a.Request, host, method, path, formattedInput)
 	if err != nil {
 		return err
 	}
@@ -318,13 +326,13 @@ const (
 	contentKey_contentType ContextKey = "content-type"
 )
 
-func SetContentType(client ClientInterface, contentType string) (newCtx context.Context) {
+func SetContentType(client ClientInterface, contentType string) {
 	ctx := client.GetContext()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx = context.WithValue(ctx, contentKey_contentType, contentType)
-	return ctx
+	client.SetContext(ctx)
 }
 
 func GetContentType(client ClientInterface) (contentType string) {
@@ -332,16 +340,16 @@ func GetContentType(client ClientInterface) (contentType string) {
 	v := ctx.Value(contentKey_contentType)
 	if v == nil {
 		SetContentType(client, "application/json")
+		ctx = client.GetContext() // 重新获取
+		v = ctx.Value(contentKey_contentType)
 	}
-	v = ctx.Value(contentKey_contentType)
 	contentType = cast.ToString(v)
 	return contentType
 }
 
 // RequestFn 通用请求方法
-func RequestFn(ctx context.Context, host string, method string, path string, params string) (out []byte, err error) {
+func RequestFn(r *resty.Request, host string, method string, path string, params string) (out []byte, err error) {
 	urlstr := fmt.Sprintf("%s%s", host, path)
-	r := resty.New().NewRequest()
 	switch strings.ToUpper(method) {
 	case http.MethodGet:
 		m, err := str2FormMap(params)
@@ -352,6 +360,7 @@ func RequestFn(ctx context.Context, host string, method string, path string, par
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		r = r.SetBody(params)
 	}
+
 	logInfo := &tormcurl.LogInfoHttp{
 		GetRequest: func() *http.Request { return r.RawRequest },
 	}
