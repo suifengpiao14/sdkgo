@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
+	"github.com/spf13/cast"
 	"github.com/suifengpiao14/gojsonschemavalidator"
 	"github.com/suifengpiao14/jsonschemaline"
 	"github.com/suifengpiao14/kvstruct"
@@ -42,11 +43,15 @@ type ClientInterface interface {
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
 	GetOutputRef() (output ClientOutputI)
-	Request(ctx context.Context) (err error)
+	Request() (err error)
 	GetCClient(c ClientInterface) (cClient *_Client, err error)
+	SetContext(ctx context.Context)
+	GetContext() (ctx context.Context)
 }
 
-type DefaultImplementPartClientFuncs struct{}
+type DefaultImplementPartClientFuncs struct {
+	ctx context.Context
+}
 
 func (e *DefaultImplementPartClientFuncs) GetInputSchema() (lineschema string) {
 	return ""
@@ -57,9 +62,18 @@ func (e *DefaultImplementPartClientFuncs) GetOutputSchema() (lineschema string) 
 
 func (e *DefaultImplementPartClientFuncs) Init() {
 }
+func (e *DefaultImplementPartClientFuncs) SetContext(ctx context.Context) {
 
+	e.ctx = ctx
+}
+func (e *DefaultImplementPartClientFuncs) GetContext() (ctx context.Context) {
+	if e.ctx == nil {
+		e.ctx = context.Background()
+	}
+	return e.ctx
+}
 func (e *DefaultImplementPartClientFuncs) GetCClient(c ClientInterface) (cClient *_Client, err error) {
-	cClient, err = GetClient(c)
+	cClient, err = GetClient(c, context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +174,7 @@ func RegisterClient(ClientInterface ClientInterface) (err error) {
 	return nil
 }
 
-func GetClient(client ClientInterface) (cClient *_Client, err error) {
+func GetClient(client ClientInterface, ctx context.Context) (cClient *_Client, err error) {
 	method, path := client.GetRoute()
 	key := getRouteKey(method, path)
 	apiAny, ok := clientMap.Load(key)
@@ -233,13 +247,13 @@ func (a _Client) convertOutput(out string) (err error) {
 	return nil
 }
 
-//FormatAsIntput 供外部格式化输出
+// FormatAsIntput 供外部格式化输出
 func (a _Client) FormatAsIntput(input string) (formatedInput string, err error) {
 	formatedInput, err = a.modifyTypeByFormat(input, a.inputFormatGjsonPath)
 	return formatedInput, err
 }
 
-//FormatAsOutput 供外部格式化输出
+// FormatAsOutput 供外部格式化输出
 func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error) {
 	formatedOutput, err = a.modifyTypeByFormat(output, a.outputFormatGjsonPath)
 	return formatedOutput, err
@@ -260,21 +274,19 @@ func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 			return err
 		}
 	}
-	err = a.inputValidate(inputStr)
-	if err != nil {
-		return err
-	}
+
 	//将format 中 int,float,bool 应用到数据
 	formattedInput, err := a.FormatAsIntput(inputStr)
 	if err != nil {
 		return err
 	}
-	params := make(map[string]string)
-	err = json.Unmarshal([]byte(formattedInput), &params)
+	err = a.inputValidate(formattedInput)
 	if err != nil {
 		return err
 	}
-	outByte, err := RequestFn(ctx, a.ClientInterface, host)
+
+	method, path := a.GetRoute()
+	outByte, err := RequestFn(ctx, host, method, path, formattedInput)
 	if err != nil {
 		return err
 	}
@@ -300,18 +312,43 @@ func (a _Client) RequestFn(ctx context.Context, host string) (err error) {
 	return nil
 }
 
+type ContextKey string
+
+const (
+	contentKey_contentType ContextKey = "content-type"
+)
+
+func SetContentType(client ClientInterface, contentType string) (newCtx context.Context) {
+	ctx := client.GetContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = context.WithValue(ctx, contentKey_contentType, contentType)
+	return ctx
+}
+
+func GetContentType(client ClientInterface) (contentType string) {
+	ctx := client.GetContext()
+	v := ctx.Value(contentKey_contentType)
+	if v == nil {
+		SetContentType(client, "application/json")
+	}
+	v = ctx.Value(contentKey_contentType)
+	contentType = cast.ToString(v)
+	return contentType
+}
+
 // RequestFn 通用请求方法
-func RequestFn(ctx context.Context, input ClientInterface, host string) (out []byte, err error) {
-	method, path := input.GetRoute()
+func RequestFn(ctx context.Context, host string, method string, path string, params string) (out []byte, err error) {
 	urlstr := fmt.Sprintf("%s%s", host, path)
 	r := resty.New().NewRequest()
-	params, err := Struct2FormMap(input)
-	if err != nil {
-		return nil, err
-	}
 	switch strings.ToUpper(method) {
 	case http.MethodGet:
-		r = r.SetQueryParams(params)
+		m, err := str2FormMap(params)
+		if err != nil {
+			return nil, err
+		}
+		r = r.SetQueryParams(m)
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		r = r.SetBody(params)
 	}
@@ -334,13 +371,9 @@ func RequestFn(ctx context.Context, input ClientInterface, host string) (out []b
 	return responseBody, nil
 }
 
-// Struct2FormMap 结构体转map[string]string 用于请求参数传递
-func Struct2FormMap(v any) (out map[string]string, err error) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	strJson, err := kvstruct.FormatValue2String(string(b), "")
+// str2FormMap 结构体转map[string]string 用于请求参数传递
+func str2FormMap(s string) (out map[string]string, err error) {
+	strJson, err := kvstruct.FormatValue2String(s, "")
 	if err != nil {
 		return nil, err
 	}
