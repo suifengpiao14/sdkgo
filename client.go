@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
 	"sync"
 
+	_ "github.com/go-chassis/go-chassis/v2/bootstrap"
+	"github.com/go-chassis/go-chassis/v2/client/rest"
+	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
@@ -43,7 +47,6 @@ type ClientInterface interface {
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
 	GetOutputRef() (output ClientOutputI)
-	Request(ctx context.Context) (err error)
 	GetCClient(ctx context.Context, c ClientInterface) (cClient *_Client, err error)
 	SetContext(ctx context.Context)
 	GetContext() (ctx context.Context)
@@ -115,7 +118,6 @@ type _Client struct {
 	outputFormatGjsonPath string
 	validateInputLoader   gojsonschema.JSONLoader
 	validateOutputLoader  gojsonschema.JSONLoader
-	Request               *resty.Request
 }
 
 var clientMap sync.Map
@@ -204,7 +206,6 @@ func GetClient(ctx context.Context, client ClientInterface) (cClient *_Client, e
 		inputFormatGjsonPath:  exitsApi.inputFormatGjsonPath,
 		outputFormatGjsonPath: exitsApi.outputFormatGjsonPath,
 		defaultJson:           exitsApi.defaultJson,
-		Request:               resty.New().R(),
 	}
 	return cClient, nil
 }
@@ -261,8 +262,10 @@ func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error
 	return formatedOutput, err
 }
 
+type RequestFn func(ctx context.Context, method string, path string, body []byte) (out []byte, err error)
+
 // RequestFn 通用请求方法
-func (a _Client) RequestFn(host string) (err error) {
+func (a _Client) RequestFn(requestFn RequestFn) (err error) {
 	b, err := json.Marshal(a.ClientInterface)
 	if err != nil {
 		return err
@@ -288,13 +291,8 @@ func (a _Client) RequestFn(host string) (err error) {
 	}
 
 	method, path := a.GetRoute()
-	r := a.Request
-	headContentType := "Content-Type"
-	if r.Header.Get(headContentType) == "" {
-		r.Header.Add(headContentType, GetContentType(a.ClientInterface))
-	}
 
-	outByte, err := RequestFn(a.Request, host, method, path, formattedInput)
+	outByte, err := requestFn(a.GetContext(), method, path, []byte(formattedInput))
 	if err != nil {
 		return err
 	}
@@ -337,47 +335,89 @@ func SetContentType(client ClientInterface, contentType string) {
 
 func GetContentType(client ClientInterface) (contentType string) {
 	ctx := client.GetContext()
+	contentType = getContentType(ctx)
+	return contentType
+
+}
+
+func getContentType(ctx context.Context) (contentType string) {
 	v := ctx.Value(contentKey_contentType)
-	if v == nil {
-		SetContentType(client, "application/json")
-		ctx = client.GetContext() // 重新获取
-		v = ctx.Value(contentKey_contentType)
-	}
 	contentType = cast.ToString(v)
+	if contentType == "" {
+		contentType = "application/json"
+	}
 	return contentType
 }
 
-// RequestFn 通用请求方法
-func RequestFn(r *resty.Request, host string, method string, path string, params string) (out []byte, err error) {
-	urlstr := fmt.Sprintf("%s%s", host, path)
-	switch strings.ToUpper(method) {
-	case http.MethodGet:
-		m, err := str2FormMap(params)
+// RestyRequestFn 通用请求方法
+func RestyRequestFn(host string) (requestFn RequestFn) {
+	return func(ctx context.Context, method string, path string, body []byte) (out []byte, err error) {
+		r := resty.New().R()
+		urlstr := fmt.Sprintf("%s%s", host, path)
+
+		headContentType := "Content-Type"
+		if r.Header.Get(headContentType) == "" {
+			r.Header.Add(headContentType, getContentType(ctx))
+		}
+
+		switch strings.ToUpper(method) {
+		case http.MethodGet:
+			m, err := str2FormMap(string(body))
+			if err != nil {
+				return nil, err
+			}
+			r = r.SetQueryParams(m)
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			r = r.SetBody(body)
+		}
+
+		logInfo := &tormcurl.LogInfoHttp{
+			GetRequest: func() *http.Request { return r.RawRequest },
+		}
+		defer func() {
+			logchan.SendLogInfo(logInfo)
+		}()
+		res, err := r.Execute(method, urlstr)
 		if err != nil {
 			return nil, err
 		}
-		r = r.SetQueryParams(m)
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		r = r.SetBody(params)
+		if err != nil {
+			return nil, err
+		}
+		responseBody := res.Body()
+		logInfo.ResponseBody = string(responseBody)
+		logInfo.Response = res.RawResponse
+		return responseBody, nil
 	}
 
-	logInfo := &tormcurl.LogInfoHttp{
-		GetRequest: func() *http.Request { return r.RawRequest },
+}
+
+func ChasissRequestFn(host string) (requestFn RequestFn) {
+	return func(ctx context.Context, method string, path string, body []byte) (out []byte, err error) {
+		urlstr := fmt.Sprintf("%s%s", host, path)
+		r, err := rest.NewRequest(method, urlstr, body)
+		if err != nil {
+			return nil, err
+		}
+		res, err := core.NewRestInvoker().ContextDo(ctx, r)
+		if err != nil {
+			return nil, err
+		}
+		logInfo := &tormcurl.LogInfoHttp{
+			GetRequest: func() *http.Request { return r },
+		}
+		defer func() {
+			logchan.SendLogInfo(logInfo)
+		}()
+		defer res.Body.Close()
+		responseBody, err := io.ReadAll(res.Body)
+		if err != nil {
+			return nil, err
+		}
+		logInfo.ResponseBody = string(responseBody)
+		logInfo.Response = res
+		return responseBody, nil
 	}
-	defer func() {
-		logchan.SendLogInfo(logInfo)
-	}()
-	res, err := r.Execute(method, urlstr)
-	if err != nil {
-		return nil, err
-	}
-	if err != nil {
-		return nil, err
-	}
-	responseBody := res.Body()
-	logInfo.ResponseBody = string(responseBody)
-	logInfo.Response = res.RawResponse
-	return responseBody, nil
 }
 
 // str2FormMap 结构体转map[string]string 用于请求参数传递
