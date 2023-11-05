@@ -6,7 +6,6 @@ require (
 	github.com/go-chassis/go-chassis/v2 v2.7.1
 	github.com/go-resty/resty/v2 v2.10.0
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/cast v1.5.1
 	github.com/suifengpiao14/kvstruct v0.0.14
 	github.com/suifengpiao14/lineschema v0.0.5
 	github.com/suifengpiao14/logchan/v2 v2.0.22
@@ -42,6 +41,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/rs/xid v1.5.0 // indirect
 	github.com/smarty/assertions v1.15.1 // indirect
+	github.com/spf13/cast v1.5.1 // indirect
 	github.com/suifengpiao14/funcs v0.0.11 // indirect
 	github.com/suifengpiao14/gjsonmodifier v0.1.9 // indirect
 	github.com/tidwall/gjson v1.17.0 // indirect
