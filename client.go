@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
-	"sync"
 
 	_ "github.com/go-chassis/go-chassis/v2/bootstrap"
 	"github.com/go-chassis/go-chassis/v2/client/rest"
@@ -16,22 +14,16 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
-	"github.com/suifengpiao14/gojsonschemavalidator"
-	"github.com/suifengpiao14/jsonschemaline"
 	"github.com/suifengpiao14/kvstruct"
+	"github.com/suifengpiao14/lineschema/application/validatestream"
 	"github.com/suifengpiao14/logchan/v2"
+	"github.com/suifengpiao14/stream"
 	"github.com/suifengpiao14/torm/tormcurl"
-	"github.com/tidwall/gjson"
-	"github.com/xeipuuv/gojsonschema"
 )
 
 var (
 	API_NOT_FOUND = errors.Errorf("not found client")
 )
-
-type ClientOutputI interface {
-	Error() (err error) // 判断结果是否有错误,没有错误,认为成功
-}
 
 type DefaultImplementClientOutput struct{}
 
@@ -40,31 +32,23 @@ func (c DefaultImplementClientOutput) Error() (err error) {
 }
 
 type ClientInterface interface {
-	GetInputSchema() (lineschema string)
-	GetOutputSchema() (lineschema string)
 	GetRoute() (method string, path string)
 	Init()
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
-	GetOutputRef() (output ClientOutputI)
-	GetCClient(ctx context.Context, c ClientInterface) (cClient *_Client, err error)
 	SetContext(ctx context.Context)
 	GetContext() (ctx context.Context)
+	GetStream() (stream stream.StreamInterface)
+	ParseResponse(responseBody []byte) (err error)
 }
 
 type DefaultImplementPartClientFuncs struct {
 	ctx context.Context
 }
 
-func (e *DefaultImplementPartClientFuncs) GetInputSchema() (lineschema string) {
-	return ""
-}
-func (e *DefaultImplementPartClientFuncs) GetOutputSchema() (lineschema string) {
-	return ""
-}
-
 func (e *DefaultImplementPartClientFuncs) Init() {
 }
+
 func (e *DefaultImplementPartClientFuncs) SetContext(ctx context.Context) {
 
 	e.ctx = ctx
@@ -75,248 +59,53 @@ func (e *DefaultImplementPartClientFuncs) GetContext() (ctx context.Context) {
 	}
 	return e.ctx
 }
-func (e *DefaultImplementPartClientFuncs) GetCClient(ctx context.Context, c ClientInterface) (cClient *_Client, err error) {
-	cClient, err = GetClient(ctx, c)
+
+func Run(client ClientInterface) (out []byte, err error) {
+	input, err := json.Marshal(client)
 	if err != nil {
 		return nil, err
 	}
-	return cClient, nil
-}
-
-type LogName string
-
-func (logName LogName) String() (name string) {
-	return string(logName)
-}
-
-const (
-	LOG_INFO_EXEC_Client_HANDLER LogName = "LogInfoExecClientHandler"
-)
-
-type LogInfoClientRun struct {
-	Input          string
-	DefaultJson    string
-	MergedDefault  string
-	Err            error `json:"error"`
-	FormattedInput string
-	OriginalOut    string
-	Out            string
-	logchan.EmptyLogInfo
-}
-
-func (l *LogInfoClientRun) GetName() logchan.LogName {
-	return LOG_INFO_EXEC_Client_HANDLER
-}
-func (l *LogInfoClientRun) Error() error {
-	return l.Err
-}
-
-type _Client struct {
-	ClientInterface
-	inputFormatGjsonPath  string
-	defaultJson           string
-	outputFormatGjsonPath string
-	validateInputLoader   gojsonschema.JSONLoader
-	validateOutputLoader  gojsonschema.JSONLoader
-}
-
-var clientMap sync.Map
-
-const (
-	clientMap_route_add_key = "___all_client_add___"
-)
-
-// RegisterClient 创建处理器，内部逻辑在接收请求前已经确定，后续不变，所以有错误直接panic ，能正常启动后，这部分不会出现错误
-func RegisterClient(ClientInterface ClientInterface) (err error) {
-	method, path := ClientInterface.GetRoute()
-	key := getRouteKey(method, path)
-	// 以下初始化可以复用,线程安全
-	api := &_Client{
-		ClientInterface: ClientInterface,
+	s := client.GetStream()
+	out, err = s.Run(client.GetContext(), input)
+	if err != nil {
+		return nil, err
 	}
-	inputSchema := ClientInterface.GetInputSchema()
-	if inputSchema != "" {
-		api.validateInputLoader, err = newJsonschemaLoader(inputSchema)
-		if err != nil {
-			return err
-		}
-		inputLineSchema, err := jsonschemaline.ParseJsonschemaline(inputSchema)
-		if err != nil {
-			return err
-		}
-		api.inputFormatGjsonPath = inputLineSchema.GjsonPath(true, jsonschemaline.FormatPathFnByFormatOut) // 这个地方要反向，将输入的字符全部转为字符串，供网络传输
-		defaultInputJson, err := inputLineSchema.DefaultJson()
-		if err != nil {
-			err = errors.WithMessage(err, "get input default json error")
-			return err
-		}
-		api.defaultJson = defaultInputJson.Json
-	}
-	outputSchema := ClientInterface.GetOutputSchema()
-	if outputSchema != "" {
-		api.validateOutputLoader, err = newJsonschemaLoader(outputSchema)
-		if err != nil {
-			return err
-		}
-		outputLineSchema, err := jsonschemaline.ParseJsonschemaline(outputSchema)
-		if err != nil {
-			return err
-		}
-		api.outputFormatGjsonPath = outputLineSchema.GjsonPath(true, jsonschemaline.FormatPathFnByFormatIn) // 这个地方要反向，将输入的字符全部转为结构体类型，供程序应用
-	}
-	clientMap.Store(key, api)
-	routes := make(map[string][2]string, 0)
-	if routesI, ok := clientMap.Load(clientMap_route_add_key); ok {
-		if old, ok := routesI.(map[string][2]string); ok {
-			routes = old
-		}
-	}
-	route := [2]string{method, path}
-	routes[key] = route
-	clientMap.Store(clientMap_route_add_key, routes)
-	return nil
+	return out, nil
 }
 
-func GetClient(ctx context.Context, client ClientInterface) (cClient *_Client, err error) {
+func DefaultSDKStream(client ClientInterface, lineschemaApi validatestream.LineschemaApi, requestFn RequestFn, errHandlerFn stream.HandlerErrorFn) (s *stream.Stream, err error) {
+
+	in, out, err := validatestream.GetApiStreamHandlerFn(lineschemaApi)
+	if err != nil {
+		return nil, err
+	}
+	handlerFns := make([]stream.HandlerFn, 0)
+	handlerFns = append(handlerFns, out...)
+	handlerFns = append(handlerFns, RequestStreamHandlerFn(client, requestFn))
+	handlerFns = append(handlerFns, in...)
+	handlerFns = append(handlerFns, ResponseStreamHandlerFn(client))
+	s = stream.NewStream(
+		errHandlerFn,
+		handlerFns...,
+	)
+	return s, err
+}
+
+func ResponseStreamHandlerFn(client ClientInterface) (handlerFn stream.HandlerFn) {
+	return func(ctx context.Context, input []byte) (out []byte, err error) {
+		err = client.ParseResponse(input)
+		return nil, err
+	}
+}
+
+func RequestStreamHandlerFn(client ClientInterface, requestFn RequestFn) (handlerFn stream.HandlerFn) {
 	method, path := client.GetRoute()
-	key := getRouteKey(method, path)
-	apiAny, ok := clientMap.Load(key)
-	if !ok {
-		//延迟注册
-		rt := reflect.TypeOf(client).Elem()
-		rv := reflect.New(rt)
-		_client := rv.Interface().(ClientInterface)
-		_client.Init()
-		err = RegisterClient(_client)
-		if err != nil {
-			return nil, err
-		}
-		apiAny, ok = clientMap.Load(key)
-		if !ok {
-			return cClient, errors.WithMessagef(API_NOT_FOUND, "method:%s,path:%s", method, path)
-		}
+	return func(ctx context.Context, input []byte) (out []byte, err error) {
+		return requestFn(ctx, method, path, input)
 	}
-
-	exitsApi := apiAny.(*_Client)
-	client.Init()
-	cClient = &_Client{
-		ClientInterface:       client,
-		validateInputLoader:   exitsApi.validateInputLoader,
-		validateOutputLoader:  exitsApi.validateOutputLoader,
-		inputFormatGjsonPath:  exitsApi.inputFormatGjsonPath,
-		outputFormatGjsonPath: exitsApi.outputFormatGjsonPath,
-		defaultJson:           exitsApi.defaultJson,
-	}
-	return cClient, nil
-}
-
-func (a _Client) inputValidate(input string) (err error) {
-	if a.validateInputLoader == nil {
-		return nil
-	}
-	inputStr := string(input)
-	err = gojsonschemavalidator.Validate(inputStr, a.validateInputLoader)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-func (a _Client) outputValidate(output string) (err error) {
-	outputStr := string(output)
-	if a.validateOutputLoader == nil {
-		return nil
-	}
-	err = gojsonschemavalidator.Validate(outputStr, a.validateOutputLoader)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (a _Client) modifyTypeByFormat(input string, formatGjsonPath string) (formattedInput string, err error) {
-	formattedInput = input
-	if formatGjsonPath == "" {
-		return formattedInput, nil
-	}
-	formattedInput = gjson.Get(input, formatGjsonPath).String()
-	return formattedInput, nil
-}
-
-func (a _Client) convertOutput(out string) (err error) {
-	err = json.Unmarshal([]byte(out), a.ClientInterface.GetOutputRef())
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// FormatAsIntput 供外部格式化输出
-func (a _Client) FormatAsIntput(input string) (formatedInput string, err error) {
-	formatedInput, err = a.modifyTypeByFormat(input, a.inputFormatGjsonPath)
-	return formatedInput, err
-}
-
-// FormatAsOutput 供外部格式化输出
-func (a _Client) FormatAsOutput(output string) (formatedOutput string, err error) {
-	formatedOutput, err = a.modifyTypeByFormat(output, a.outputFormatGjsonPath)
-	return formatedOutput, err
 }
 
 type RequestFn func(ctx context.Context, method string, path string, body []byte) (out []byte, err error)
-
-// RequestFn 通用请求方法
-func (a _Client) RequestFn(requestFn RequestFn) (err error) {
-	b, err := json.Marshal(a.ClientInterface)
-	if err != nil {
-		return err
-	}
-	inputStr := string(b)
-	// 合并默认值
-	if a.defaultJson != "" {
-		inputStr, err = jsonschemaline.MergeDefault(inputStr, a.defaultJson)
-		if err != nil {
-			err = errors.WithMessage(err, "merge default value error")
-			return err
-		}
-	}
-
-	//将format 中 int,float,bool 应用到数据
-	formattedInput, err := a.FormatAsIntput(inputStr)
-	if err != nil {
-		return err
-	}
-	err = a.inputValidate(formattedInput)
-	if err != nil {
-		return err
-	}
-
-	method, path := a.GetRoute()
-
-	outByte, err := requestFn(a.GetContext(), method, path, []byte(formattedInput))
-	if err != nil {
-		return err
-	}
-	originalOut := string(outByte)
-	err = a.outputValidate(originalOut) // 先验证网络数据
-	if err != nil {
-		return err
-	}
-	outStr, err := a.FormatAsOutput(originalOut) // 网络数据ok，内部转换
-	if err != nil {
-		return err
-	}
-
-	err = a.convertOutput(outStr)
-	if err != nil {
-		return err
-	}
-	err = a.GetOutputRef().Error()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 type ContextKey string
 
@@ -431,28 +220,6 @@ func str2FormMap(s string) (out map[string]string, err error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func getRouteKey(method string, path string) (key string) {
-	return fmt.Sprintf("%s_%s", strings.ToLower(method), path)
-}
-
-func newJsonschemaLoader(lineSchemaStr string) (jsonschemaLoader gojsonschema.JSONLoader, err error) {
-	if lineSchemaStr == "" {
-		err = errors.Errorf("NewJsonschemaLoader: arg lineSchemaStr required,got empty")
-		return nil, err
-	}
-	inputlineSchema, err := jsonschemaline.ParseJsonschemaline(lineSchemaStr)
-	if err != nil {
-		return nil, err
-	}
-	jsb, err := inputlineSchema.JsonSchema()
-	if err != nil {
-		return nil, err
-	}
-	jsonschemaStr := string(jsb)
-	jsonschemaLoader = gojsonschema.NewStringLoader(jsonschemaStr)
-	return jsonschemaLoader, nil
 }
 
 func JsonMarshal(o interface{}) (out string, err error) {
