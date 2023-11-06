@@ -6,7 +6,7 @@ require (
 	github.com/go-chassis/go-chassis/v2 v2.7.1
 	github.com/go-resty/resty/v2 v2.10.0
 	github.com/pkg/errors v0.9.1
-	github.com/suifengpiao14/lineschema v0.0.5
+	github.com/suifengpiao14/lineschema v0.0.6
 	github.com/suifengpiao14/logchan/v2 v2.0.22
 	github.com/suifengpiao14/stream v0.0.5
 	github.com/suifengpiao14/torm v0.0.19
@@ -53,7 +53,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

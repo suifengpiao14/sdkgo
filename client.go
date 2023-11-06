@@ -10,7 +10,7 @@ import (
 	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
-	"github.com/suifengpiao14/lineschema/application/validatestream"
+	"github.com/suifengpiao14/lineschema/application/lineschemapacket"
 	"github.com/suifengpiao14/logchan/v2"
 	"github.com/suifengpiao14/stream"
 	"github.com/suifengpiao14/torm/tormcurl"
@@ -58,9 +58,9 @@ func Run(ctx context.Context, client ClientInterface) (err error) {
 	return nil
 }
 
-func DefaultSDKStream(client ClientInterface, lineschemaApi validatestream.LineschemaApi) (s *stream.Stream, err error) {
+func DefaultSDKStream(client ClientInterface, lineschemaPacket lineschemapacket.LineschemaPacketI) (s *stream.Stream, err error) {
 
-	in, out, err := validatestream.GetApiStreamHandlerFn(lineschemaApi)
+	in, out, err := lineschemapacket.GetLineschemaPackageHandlerFn(lineschemaPacket)
 	if err != nil {
 		return nil, err
 	}
