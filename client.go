@@ -10,7 +10,6 @@ import (
 	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
-	"github.com/suifengpiao14/kvstruct"
 	"github.com/suifengpiao14/lineschema/application/validatestream"
 	"github.com/suifengpiao14/logchan/v2"
 	"github.com/suifengpiao14/stream"
@@ -77,6 +76,9 @@ func DefaultSDKStream(client ClientInterface, lineschemaApi validatestream.Lines
 	return s, err
 }
 
+//RequestFn 封装http请求数据格式
+type RequestFn func(ctx context.Context, req *http.Request) (out []byte, err error)
+
 // RestyRequestFn 通用请求方法
 func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err error) {
 	r := resty.New().R()
@@ -125,26 +127,4 @@ func ChasissRequestFn(ctx context.Context, req *http.Request) (out []byte, err e
 	logInfo.Response = res
 	return responseBody, nil
 
-}
-
-// str2FormMap 结构体转map[string]string 用于请求参数传递
-func str2FormMap(s string) (out map[string]string, err error) {
-	strJson, err := kvstruct.FormatValue2String(s, "")
-	if err != nil {
-		return nil, err
-	}
-	err = json.Unmarshal([]byte(strJson), &out)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func JsonMarshal(o interface{}) (out string, err error) {
-	b, err := json.Marshal(o)
-	if err != nil {
-		return "", err
-	}
-	out = string(b)
-	return out, nil
 }
