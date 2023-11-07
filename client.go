@@ -58,16 +58,15 @@ func SDKOutIPackHandlers(outI OutI) (packHandler stream.PackHandler) {
 func DefaultSDKStream(client ClientInterface, lineschemaPacket lineschemapacket.LineschemaPacketI) (s *stream.Stream, err error) {
 
 	out := client.GetOutRef()
-	packHandler := stream.NewPackHandler(client.RequestHandler, nil) // 请求网络返回
-	s = stream.NewStream(nil, packHandler)
+	strucpackHandler := stream.Struct2Bytes2StructJsonPacket(client, out)
+	s = stream.NewStream(nil, SDKOutIPackHandlers(out), strucpackHandler)
 	packHandlers, err := lineschemapacket.SDKPackHandlers(lineschemaPacket)
 	if err != nil {
 		return nil, err
 	}
 	s.AddPack(packHandlers...)
-	strucpackHandler := stream.Bytes2Stuct2BytesJsonPacket(client, out)
-	packHandlers.Add(strucpackHandler)
-	s.AddPack(SDKOutIPackHandlers(out))
+	packHandler := stream.NewPackHandler(client.RequestHandler, nil) // 请求网络返回
+	packHandlers.Add(packHandler)
 	return s, err
 }
 
