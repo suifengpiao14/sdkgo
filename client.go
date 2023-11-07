@@ -2,7 +2,6 @@ package sdkgolib
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 
@@ -10,7 +9,7 @@ import (
 	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
-	"github.com/suifengpiao14/lineschema/application/lineschemapacket"
+	"github.com/suifengpiao14/lineschemapacket"
 	"github.com/suifengpiao14/logchan/v2"
 	"github.com/suifengpiao14/stream"
 	"github.com/suifengpiao14/torm/tormcurl"
@@ -26,14 +25,17 @@ func (c DefaultImplementClientOutput) Error() (err error) {
 	return nil
 }
 
+type OutI interface {
+	Error() (err error)
+}
+
 type ClientInterface interface {
 	GetRoute() (method string, path string)
 	Init()
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
-	GetStream() (stream stream.StreamInterface, err error)
+	GetOutRef() (outRef OutI)
 	RequestHandler(ctx context.Context, input []byte) (out []byte, err error)
-	ResponseHandler(ctx context.Context, responseBody []byte) (out []byte, err error)
 }
 
 type DefaultImplementPartClientFuncs struct {
@@ -42,37 +44,30 @@ type DefaultImplementPartClientFuncs struct {
 func (e *DefaultImplementPartClientFuncs) Init() {
 }
 
-func Run(ctx context.Context, client ClientInterface) (err error) {
-	input, err := json.Marshal(client)
-	if err != nil {
-		return err
-	}
-	s, err := client.GetStream()
-	if err != nil {
-		return err
-	}
-	_, err = s.Run(ctx, input)
-	if err != nil {
-		return err
-	}
-	return nil
+func SDKOutIPackHandlers(outI OutI) (packHandler stream.PackHandler) {
+	return stream.NewPackHandler(nil, func(ctx context.Context, input []byte) (out []byte, err error) {
+		err = outI.Error()
+		if err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
 }
 
 func DefaultSDKStream(client ClientInterface, lineschemaPacket lineschemapacket.LineschemaPacketI) (s *stream.Stream, err error) {
 
-	in, out, err := lineschemapacket.GetLineschemaPackageHandlerFn(lineschemaPacket)
+	out := client.GetOutRef()
+	packHandler := stream.NewPackHandler(client.RequestHandler, nil) // 请求网络返回
+	s = stream.NewStream(nil, packHandler)
+	packHandlers, err := lineschemapacket.SDKPackHandlers(lineschemaPacket)
 	if err != nil {
 		return nil, err
 	}
-	handlerFns := make([]stream.HandlerFn, 0)
-	handlerFns = append(handlerFns, out...)
-	handlerFns = append(handlerFns, client.RequestHandler)
-	handlerFns = append(handlerFns, in...)
-	handlerFns = append(handlerFns, client.ResponseHandler)
-	s = stream.NewStream(
-		nil,
-		handlerFns...,
-	)
+	s.AddPack(packHandlers...)
+	strucpackHandler := stream.Bytes2Stuct2BytesJsonPacket(client, out)
+	packHandlers.Add(strucpackHandler)
+	s.AddPack(SDKOutIPackHandlers(out))
 	return s, err
 }
 
