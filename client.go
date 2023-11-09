@@ -66,7 +66,7 @@ func DefaultSDKStream(client ClientInterface, lineschemaPacket lineschemapacket.
 	}
 	s.AddPack(packHandlers...)
 	packHandler := stream.NewPackHandler(client.RequestHandler, nil) // 请求网络返回
-	packHandlers.Add(packHandler)
+	s.AddPack(packHandler)
 	return s, err
 }
 
