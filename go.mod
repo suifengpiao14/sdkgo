@@ -6,9 +6,9 @@ require (
 	github.com/go-chassis/go-chassis/v2 v2.7.1
 	github.com/go-resty/resty/v2 v2.10.0
 	github.com/pkg/errors v0.9.1
-	github.com/suifengpiao14/lineschemapacket v0.0.4
+	github.com/suifengpiao14/lineschemapacket v0.0.6
 	github.com/suifengpiao14/logchan/v2 v2.0.22
-	github.com/suifengpiao14/stream v0.0.12
+	github.com/suifengpiao14/stream v0.0.17
 	github.com/suifengpiao14/torm v0.0.19
 )
 
@@ -44,7 +44,7 @@ require (
 	github.com/suifengpiao14/funcs v0.0.16 // indirect
 	github.com/suifengpiao14/gjsonmodifier v0.1.9 // indirect
 	github.com/suifengpiao14/kvstruct v0.0.14 // indirect
-	github.com/suifengpiao14/lineschema v0.0.7 // indirect
+	github.com/suifengpiao14/lineschema v0.0.11 // indirect
 	github.com/tidwall/gjson v1.17.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
