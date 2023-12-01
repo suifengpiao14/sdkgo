@@ -23,16 +23,12 @@ func (c DefaultImplementClientOutput) Error() (err error) {
 	return nil
 }
 
-type OutI interface {
-	Error() (err error)
-}
-
 type ClientInterface interface {
 	GetRoute() (method string, path string)
 	Init()
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
-	GetOutRef() (outRef OutI)
+	GetOutRef() (outRef error)
 	RequestHandler(ctx context.Context, input []byte) (out []byte, err error)
 }
 
