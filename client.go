@@ -30,6 +30,7 @@ type ClientInterface interface {
 	GetName() (domain string, name string)
 	GetOutRef() (outRef error)
 	RequestHandler(ctx context.Context, input []byte) (out []byte, err error)
+	SDKConfig() Config
 }
 
 type DefaultImplementPartClientFuncs struct {
@@ -38,7 +39,7 @@ type DefaultImplementPartClientFuncs struct {
 func (e *DefaultImplementPartClientFuncs) Init() {
 }
 
-//RequestFn 封装http请求数据格式
+// RequestFn 封装http请求数据格式
 type RequestFn func(ctx context.Context, req *http.Request) (out []byte, err error)
 
 // RestyRequestFn 通用请求方法
@@ -48,6 +49,15 @@ func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err err
 	r.Header = req.Header
 	r.FormData = req.Form
 	r.RawRequest = req
+	body, err := req.GetBody()
+	if err == nil && body != nil {
+		defer body.Close()
+		b, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		r.SetBody(b)
+	}
 
 	logInfo := &torm.LogInfoHttp{
 		GetRequest: func() *http.Request { return r.RawRequest },
