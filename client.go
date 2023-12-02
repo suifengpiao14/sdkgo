@@ -30,7 +30,7 @@ type ClientInterface interface {
 	GetName() (domain string, name string)
 	GetOutRef() (outRef error)
 	RequestHandler(ctx context.Context, input []byte) (out []byte, err error)
-	SDKConfig() Config
+	GetSDKConfig() (sdkConfig Config)
 }
 
 type DefaultImplementPartClientFuncs struct {
