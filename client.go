@@ -26,6 +26,7 @@ func (c DefaultImplementClientOutput) Error() (err error) {
 type ClientInterface interface {
 	GetRoute() (method string, path string)
 	Init()
+	Request(ctx context.Context) (err error)
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
 	GetOutRef() (outRef error)
