@@ -50,14 +50,17 @@ func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err err
 	r.Header = req.Header
 	r.FormData = req.Form
 	r.RawRequest = req
-	body, err := req.GetBody()
-	if err == nil && body != nil {
-		defer body.Close()
-		b, err := io.ReadAll(body)
-		if err != nil {
-			return nil, err
+	if req.Body != nil {
+		var body io.ReadCloser
+		body, err = req.GetBody()
+		if err == nil && body != nil {
+			defer body.Close()
+			b, err := io.ReadAll(body)
+			if err != nil {
+				return nil, err
+			}
+			r.SetBody(b)
 		}
-		r.SetBody(b)
 	}
 
 	logInfo := &torm.LogInfoHttp{
