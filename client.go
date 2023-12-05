@@ -74,10 +74,12 @@ func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err err
 	if err != nil {
 		return nil, err
 	}
-	if err != nil {
+
+	responseBody := res.Body()
+	if res.StatusCode() != http.StatusOK {
+		err = errors.Errorf("http status:%d,body:%s", res.StatusCode(), string(responseBody))
 		return nil, err
 	}
-	responseBody := res.Body()
 	logInfo.ResponseBody = string(responseBody)
 	logInfo.Response = res.RawResponse
 	return responseBody, nil
