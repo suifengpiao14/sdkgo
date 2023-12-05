@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 
 	_ "github.com/go-chassis/go-chassis/v2/bootstrap"
 	"github.com/go-chassis/go-chassis/v2/core"
@@ -69,7 +70,7 @@ func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err err
 	defer func() {
 		logchan.SendLogInfo(logInfo)
 	}()
-	res, err := r.Execute(req.Method, urlstr)
+	res, err := r.Execute(strings.ToUpper(req.Method), urlstr)
 	if err != nil {
 		return nil, err
 	}
