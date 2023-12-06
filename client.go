@@ -20,6 +20,10 @@ var (
 
 type DefaultImplementClientOutput struct{}
 
+type OutI interface {
+	Error() (err error)
+}
+
 func (c DefaultImplementClientOutput) Error() (err error) {
 	return nil
 }
@@ -30,7 +34,7 @@ type ClientInterface interface {
 	Request(ctx context.Context) (err error)
 	GetDescription() (title string, description string)
 	GetName() (domain string, name string)
-	GetOutRef() (outRef error)
+	GetOutRef() (outRef OutI)
 	RequestHandler(ctx context.Context, input []byte) (out []byte, err error)
 	GetSDKConfig() (sdkConfig Config)
 }
