@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	_ "github.com/go-chassis/go-chassis/v2/bootstrap"
-	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/suifengpiao14/logchan/v2"
@@ -86,28 +84,6 @@ func RestyRequestFn(ctx context.Context, req *http.Request) (out []byte, err err
 	}
 	logInfo.ResponseBody = string(responseBody)
 	logInfo.Response = res.RawResponse
-	return responseBody, nil
-
-}
-
-func ChasissRequestFn(ctx context.Context, req *http.Request) (out []byte, err error) {
-	res, err := core.NewRestInvoker().ContextDo(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	logInfo := &torm.LogInfoHttp{
-		GetRequest: func() *http.Request { return req },
-	}
-	defer func() {
-		logchan.SendLogInfo(logInfo)
-	}()
-	defer res.Body.Close()
-	responseBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	logInfo.ResponseBody = string(responseBody)
-	logInfo.Response = res
 	return responseBody, nil
 
 }
