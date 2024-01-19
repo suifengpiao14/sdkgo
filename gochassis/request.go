@@ -5,8 +5,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/go-chassis/go-chassis/core"
 	_ "github.com/go-chassis/go-chassis/v2/bootstrap"
+	"github.com/go-chassis/go-chassis/v2/core"
 	"github.com/suifengpiao14/logchan/v2"
 	"github.com/suifengpiao14/torm"
 )
